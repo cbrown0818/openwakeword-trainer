@@ -194,7 +194,7 @@ info "Installing openWakeWord training dependencies..."
     "huggingface_hub>=0.20.0" \
     "PyYAML>=6.0" \
     "scipy>=1.10.0" \
-    "numpy>=1.24.0,<2.0" \
+    "numpy==1.26.4" \
     "tqdm>=4.65.0" \
     "librosa>=0.10.0"
 
@@ -204,15 +204,33 @@ info "Installing openWakeWord training dependencies..."
 # ---------------------------------------------------------------------------
 # 7. ONNX → TFLite conversion toolchain
 #
-# onnx2tf + tensorflow-cpu converts ONNX → SavedModel → TFLite.
-# onnxscript is required by torch >= 2.10 for torch.onnx.export().
-# torchcodec is used by torchaudio >= 2.10 as default audio loading backend.
+# Pinned, verified ONNX → TFLite conversion stack.
+# tf-keras is installed without dependencies because tensorflow-cpu provides
+# the TensorFlow runtime under the import name "tensorflow".
+# TorchCodec uses the CPU wheel to avoid requiring an incompatible NVRTC library.
 # ---------------------------------------------------------------------------
 info "Installing ONNX and TFLite conversion tools..."
 
 "$PIP" install onnxscript
-"$PIP" install tensorflow-cpu onnx2tf
-"$PIP" install torchcodec
+
+"$PIP" install \
+    "numpy==1.26.4" \
+    "ml-dtypes==0.5.4" \
+    "onnx==1.22.0" \
+    "onnx-graphsurgeon==0.6.1" \
+    "psutil==7.2.2" \
+    "sng4onnx==2.0.1" \
+    "sne4onnx==2.0.1" \
+    "tensorflow-cpu==2.21.0" \
+    "onnx2tf==1.28.8"
+
+"$PIP" install --no-deps "tf-keras==2.21.0"
+
+"$PIP" install \
+    --no-deps \
+    --only-binary=:all: \
+    --index-url https://download.pytorch.org/whl/cpu \
+    "torchcodec==0.16.0+cpu"
 
 "$PIP" install --upgrade setuptools
 
