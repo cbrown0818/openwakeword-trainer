@@ -1034,12 +1034,128 @@ def _patch_augment_tqdm():
     data_py.write_text(src)
 
 
+def _patch_augment_resume():
+    """Make OpenWakeWord feature generation atomic and resumable."""
+    train_source = TRAIN_SCRIPT.read_text()
+
+    if "def _compute_features_atomically(" in train_source:
+        return
+
+    old_gate = (
+        '        if not os.path.exists(os.path.join('
+        'feature_save_dir, "positive_features_train.npy")) '
+        'or args.overwrite is True:'
+    )
+    new_gate = """        expected_feature_files = [
+            "positive_features_train.npy",
+            "negative_features_train.npy",
+            "positive_features_test.npy",
+            "negative_features_test.npy",
+        ]
+        if args.overwrite is True or not all(
+            os.path.exists(os.path.join(feature_save_dir, name))
+            for name in expected_feature_files
+        ):"""
+
+    if train_source.count(old_gate) != 1:
+        raise RuntimeError(
+            "Unexpected OpenWakeWord augmentation gate."
+        )
+
+    train_source = train_source.replace(
+        old_gate,
+        new_gate,
+        1,
+    )
+
+    compute_marker = (
+        "            # Compute features and save to disk "
+        "via memmapped arrays"
+    )
+    end_marker = (
+        '        else:\n'
+        '            logging.warning('
+        '"Openwakeword features already exist, skipping data '
+        'augmentation and feature generation")'
+    )
+
+    start = train_source.index(compute_marker)
+    end = train_source.index(end_marker, start)
+    section = train_source[start:end]
+
+    call_count = section.count(
+        "compute_features_from_generator("
+    )
+    if call_count != 4:
+        raise RuntimeError(
+            f"Expected four feature calls; found {call_count}."
+        )
+
+    section = section.replace(
+        "compute_features_from_generator(",
+        "_compute_features_atomically(",
+    )
+
+    helper = """            def _compute_features_atomically(
+                generator, *, output_file, **kwargs
+            ):
+                # A final filename represents a completed feature set.
+                if (
+                    os.path.exists(output_file)
+                    and args.overwrite is not True
+                ):
+                    logging.info(
+                        "Feature file already complete; skipping: %s",
+                        output_file,
+                    )
+                    return
+
+                partial_file = output_file + ".partial.npy"
+
+                if os.path.exists(partial_file):
+                    os.remove(partial_file)
+
+                try:
+                    compute_features_from_generator(
+                        generator,
+                        output_file=partial_file,
+                        **kwargs,
+                    )
+                    os.replace(partial_file, output_file)
+                except Exception:
+                    if os.path.exists(partial_file):
+                        os.remove(partial_file)
+                    raise
+
+"""
+
+    section = section.replace(
+        compute_marker,
+        helper + compute_marker,
+        1,
+    )
+
+    train_source = (
+        train_source[:start]
+        + section
+        + train_source[end:]
+    )
+
+    compile(
+        train_source,
+        str(TRAIN_SCRIPT),
+        "exec",
+    )
+    TRAIN_SCRIPT.write_text(train_source)
+
+
 def phase_augment():
     log.info("=" * 60)
     log.info("Phase: augment — augmenting clips with RIR + background noise")
     log.info("=" * 60)
 
     _patch_augment_tqdm()
+    _patch_augment_resume()
     _ensure_oww_feature_models()
 
     # Check for partial or stale .npy feature files.
@@ -1066,10 +1182,18 @@ def phase_augment():
                             "forcing re-augmentation", n_clips, n_feat)
                 stale = True
 
-    if existing_npy and (len(existing_npy) < 4 or stale):
-        reason = "partial" if len(existing_npy) < 4 else "stale"
-        log.warning("Deleting %s feature files (%d/4) to force clean augmentation",
-                     reason, len(existing_npy))
+    if existing_npy and len(existing_npy) < 4:
+        log.warning(
+            "Resuming partial feature set (%d/4); completed "
+            "files will be preserved",
+            len(existing_npy),
+        )
+
+    if stale:
+        log.warning(
+            "Deleting stale feature files to force clean "
+            "augmentation"
+        )
         for f in existing_npy:
             (feature_dir / f).unlink()
             log.info("  Deleted %s", f)
