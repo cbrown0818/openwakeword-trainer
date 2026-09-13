@@ -1,0 +1,58 @@
+model_name: osiris
+
+wake_word: "OSIRIS"
+
+author: osiris
+
+trained_languages:
+  - "en"
+
+version: 1
+
+target_phrases:
+  - "Osiris"
+  - "Osiris!"
+  - "Osiris?"
+
+training:
+  n_samples: 50000
+  n_samples_val: 10000
+  steps: 500000
+  layer_size: 128
+  max_neg_weight: 3000
+
+voices:
+  primary:
+    base_url: https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US
+    models:
+      en_US-lessac-medium: lessac/medium
+      en_US-amy-medium: amy/medium
+      en_US-ryan-medium: ryan/medium
+      en_US-joe-medium: joe/medium
+
+negative_phrases:
+  - "Siri"
+  - "Hey Siri"
+  - "Oh Siri"
+  - "Cyrus"
+  - "Hey Cyrus"
+  - "Iris"
+  - "sirens"
+  - "sires"
+  - "cirrus"
+  - "series"
+  - "serious"
+  - "services"
+  - "virus"
+  - "Cyrus is here"
+  - "Iris is here"
+  - "the sirens"
+  - "a series"
+  - "serious problem"
+
+speech_negatives:
+  enabled: false
+  dataset: openslr/librispeech_asr
+  split: train.clean.100
+  max_chunks: 5000
+  batch_n: 200

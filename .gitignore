@@ -29,3 +29,6 @@ run_training.sh
 
 # Local Claude Code config
 .claude/
+
+# Local Python compatibility symlink
+.python311-bin/
