@@ -1230,6 +1230,45 @@ def _patch_train_logging():
         TRAIN_SCRIPT.write_text(train_src)
 
 
+def _patch_train_conversion_default():
+    """Correct openWakeWord's truthy string default for TFLite conversion."""
+    train_src = TRAIN_SCRIPT.read_text()
+
+    start = train_src.find(
+        'parser.add_argument(\n'
+        '        "--convert_to_tflite",'
+    )
+    if start == -1:
+        raise RuntimeError(
+            "Could not locate openWakeWord --convert_to_tflite argument."
+        )
+
+    end = train_src.find("\n    )", start)
+    if end == -1:
+        raise RuntimeError(
+            "Could not locate the end of --convert_to_tflite argument."
+        )
+
+    end += len("\n    )")
+    block = train_src[start:end]
+
+    if 'default="False"' in block:
+        corrected = block.replace(
+            'default="False"',
+            "default=False",
+            1,
+        )
+        train_src = train_src[:start] + corrected + train_src[end:]
+        TRAIN_SCRIPT.write_text(train_src)
+        log.info(
+            "  Corrected openWakeWord TFLite conversion default."
+        )
+    elif "default=False" not in block:
+        raise RuntimeError(
+            "Unexpected --convert_to_tflite argument definition."
+        )
+
+
 # ===========================================================================
 # PHASE 7: Train DNN model (via openWakeWord train.py --train_model)
 # ===========================================================================
@@ -1246,6 +1285,7 @@ def phase_train():
 
     # train.py never calls logging.basicConfig(), so metrics are lost at WARNING level
     _patch_train_logging()
+    _patch_train_conversion_default()
 
     cmd = f'"{PYTHON}" {TRAIN_SCRIPT} --training_config {yaml_path} --train_model'
     log.info("$ %s", cmd)
