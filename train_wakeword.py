@@ -1346,24 +1346,71 @@ def phase_export():
     with tempfile.TemporaryDirectory() as tmp:
         try:
             import onnx2tf
-            log.info("  Converting ONNX → TFLite (onnx2tf)...")
-            # Read the ONNX input tensor name to preserve its exact shape.
-            # Without keep_shape_absolutely_input_names, onnx2tf transposes
-            # NCW (1,16,96) → NWC (1,96,16), breaking openWakeWord inference.
             import onnx as _onnx
-            _m = _onnx.load(str(onnx_path))
-            _input_name = _m.graph.input[0].name
+
+            log.info("  Converting ONNX → TFLite (onnx2tf)...")
+
+            # onnx2tf may rewrite its input ONNX file. Convert an isolated
+            # temporary copy so the trained source model remains immutable.
+            temp_root = Path(tmp)
+            temp_input_dir = temp_root / "input"
+            temp_output_dir = temp_root / "output"
+            temp_input_dir.mkdir()
+            temp_output_dir.mkdir()
+
+            temp_onnx_path = temp_input_dir / onnx_path.name
+            shutil.copy2(onnx_path, temp_onnx_path)
+
+            # Preserve any ONNX external-data files beside the temporary copy.
+            metadata = _onnx.load(
+                str(onnx_path),
+                load_external_data=False,
+            )
+            external_locations = {
+                entry.value
+                for tensor in metadata.graph.initializer
+                for entry in tensor.external_data
+                if entry.key == "location"
+            }
+
+            for location in external_locations:
+                relative_location = Path(location)
+                if (
+                    relative_location.is_absolute()
+                    or ".." in relative_location.parts
+                ):
+                    raise ValueError(
+                        f"Unsafe ONNX external-data path: {location}"
+                    )
+
+                source_data = onnx_path.parent / relative_location
+                if not source_data.is_file():
+                    raise FileNotFoundError(
+                        f"ONNX external data not found: {source_data}"
+                    )
+
+                temporary_data = temp_input_dir / relative_location
+                temporary_data.parent.mkdir(
+                    parents=True,
+                    exist_ok=True,
+                )
+                shutil.copy2(source_data, temporary_data)
+
+            # Read the copied ONNX input name and preserve its exact shape.
+            # Without this, onnx2tf can transpose NCW (1,16,96) to NWC.
+            copied_model = _onnx.load(str(temp_onnx_path))
+            _input_name = copied_model.graph.input[0].name
             onnx2tf.convert(
-                input_onnx_file_path=str(onnx_path),
-                output_folder_path=tmp,
+                input_onnx_file_path=str(temp_onnx_path),
+                output_folder_path=str(temp_output_dir),
                 non_verbose=True,
                 keep_shape_absolutely_input_names=[_input_name],
             )
             # onnx2tf produces <model_name>_float32.tflite
-            tflite_src = Path(tmp) / f"{MODEL_NAME}_float32.tflite"
+            tflite_src = temp_output_dir / f"{MODEL_NAME}_float32.tflite"
             if not tflite_src.exists():
                 # fallback: find any .tflite
-                candidates = list(Path(tmp).glob("*.tflite"))
+                candidates = list(temp_output_dir.glob("*.tflite"))
                 if candidates:
                     tflite_src = candidates[0]
                 else:
